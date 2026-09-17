@@ -1,0 +1,17 @@
+name: tgleech
+version: "1.0.0"
+author: R2-Transfer Hub
+description: Runs leech tasks queued in MongoDB by the R2-Transfer Hub's TG Leech page
+license: MIT
+tags: [leech, automation, bridge]
+min_bot_version: "3.1.10"
+entry: tgleech.py
+config_schema:
+  max_running:
+    type: int
+    default: 3
+    description: How many queued links this bridge runs at once
+  poll_seconds:
+    type: int
+    default: 5
+    description: How often the queue is checked, in seconds
