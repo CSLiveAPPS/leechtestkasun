@@ -30,6 +30,11 @@ from bot.version import get_version
 # no second collection; the Hub skips this id when it lists tasks.
 HEARTBEAT_ID = "__bridge__"
 
+# How many the Hub wants running at once. It lives beside the queue so the
+# number can be changed from the page and take effect on the next round,
+# without restarting the bot.
+CONTROL_ID = "__settings__"
+
 DEFAULT_POLL_SECONDS = 5
 DEFAULT_MAX_RUNNING = 3
 
@@ -157,6 +162,9 @@ class TgLeechBridge(PluginBase):
         self._stop = False
         # doc id -> what we know about the task we started for it
         self._running = {}
+        # How many at once, as last asked for by the Hub; None = use the
+        # plugin's own setting.
+        self._limit = None
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -182,7 +190,7 @@ class TgLeechBridge(PluginBase):
             return
         try:
             left = await queue.update_many(
-                {"status": "running", "_id": {"$ne": HEARTBEAT_ID}},
+                {"status": "running", "_id": {"$nin": [HEARTBEAT_ID, CONTROL_ID]}},
                 {
                     "$set": {
                         "status": "failed",
@@ -212,11 +220,30 @@ class TgLeechBridge(PluginBase):
     # -- the loop ----------------------------------------------------------
 
     def _max_running(self):
+        """What the Hub asked for, or the plugin's own setting if it never has."""
+        if self._limit is not None:
+            return self._limit
         try:
             value = int(self.get_config("max_running", DEFAULT_MAX_RUNNING))
         except (TypeError, ValueError):
             value = DEFAULT_MAX_RUNNING
         return max(1, min(value, 20))
+
+    async def _read_limit(self):
+        queue = _queue()
+        if queue is None:
+            return
+        try:
+            doc = await queue.find_one({"_id": CONTROL_ID})
+        except Exception:
+            return
+        if not doc:
+            self._limit = None
+            return
+        try:
+            self._limit = max(1, min(int(doc.get("maxRunning")), 20))
+        except (TypeError, ValueError):
+            self._limit = None
 
     def _poll_seconds(self):
         try:
@@ -228,6 +255,7 @@ class TgLeechBridge(PluginBase):
     async def _loop(self):
         while not self._stop:
             try:
+                await self._read_limit()
                 await self._beat()
                 await self._watch()
                 await self._cancels()
@@ -265,7 +293,7 @@ class TgLeechBridge(PluginBase):
         room = self._max_running() - len(self._running)
         while room > 0 and not self._stop:
             doc = await queue.find_one_and_update(
-                {"status": "queued", "_id": {"$ne": HEARTBEAT_ID}},
+                {"status": "queued", "_id": {"$nin": [HEARTBEAT_ID, CONTROL_ID]}},
                 {"$set": {"status": "running", "startedAt": time(), "error": None}},
                 sort=[("createdAt", 1)],
                 return_document=ReturnDocument.AFTER,
@@ -283,7 +311,21 @@ class TgLeechBridge(PluginBase):
             await self.finish(doc_id, "failed", error="This task has no link.")
             return
 
-        chat_id = doc.get("chatId") or Config.RSS_CHAT or Config.OWNER_ID
+        # Whose task this is. The bot keeps settings per account — thumbnail,
+        # dump chat, split size, prefix — and applies whichever account asked,
+        # so this is what decides which settings the task runs with.
+        wanted_user = doc.get("userId") or Config.OWNER_ID
+        try:
+            user_id = int(wanted_user)
+        except (TypeError, ValueError):
+            await self.finish(
+                doc_id, "failed", error=f"{wanted_user!r} is not a Telegram user id."
+            )
+            return
+
+        # A task posted in that account's own chat with the bot, unless it was
+        # told otherwise.
+        chat_id = doc.get("chatId") or user_id or Config.RSS_CHAT
         try:
             chat_id = int(chat_id)
         except (TypeError, ValueError):
@@ -311,15 +353,20 @@ class TgLeechBridge(PluginBase):
             return
 
         try:
-            user = await TgClient.bot.get_users(int(Config.OWNER_ID))
+            user = await TgClient.bot.get_users(user_id)
         except Exception as err:
             await self.finish(
-                doc_id, "failed", error=f"Could not read the owner account: {err}"
+                doc_id,
+                "failed",
+                error=(
+                    f"The bot cannot see user {user_id}: {err}. "
+                    "That account has to press Start in the bot's chat once before the bot can work as it."
+                ),
             )
             return
 
         # The same shape the RSS feeds use: a real message the bot sent, with
-        # the command text and the owner as its sender.
+        # the command text and the chosen account as its sender.
         message.text = command
         message.from_user = user
         message._rss_trigger = True

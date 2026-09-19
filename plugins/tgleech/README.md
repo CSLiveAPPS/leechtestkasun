@@ -37,11 +37,21 @@ Set with `/plugins` → tgleech → configure:
 | `max_running` | 3 | How many queued links run at once |
 | `poll_seconds` | 5 | How often the queue is checked |
 
+The Hub's "At one time" box overrides `max_running`. It is kept in the same collection under
+`_id: "__settings__"` as `{maxRunning: n}`, and the bridge re-reads it every round, so changing it
+takes effect within seconds and needs no restart.
+
 ## Where a link is posted
 
-Every task needs a real message for the bot to work from, exactly as the RSS feeds do. The chat is
-taken from the task itself (the Hub's "Chat id" field), then `RSS_CHAT`, then `OWNER_ID`. The owner
-must have started the bot at least once for the last of those to work.
+Every task needs a real message for the bot to work from, exactly as the RSS feeds do.
+
+**Whose task it is** comes from `userId` on the document, falling back to `OWNER_ID`. That account
+becomes the message's sender, which is what makes WZML-X apply its settings — `user_data[user_id]`
+holds the thumbnail, dump chat, split size, prefix and the rest. That account must have pressed
+Start in the bot once, or the bot cannot see it and the task fails with a message saying so.
+
+**Where it is posted** is `chatId` if the document has one, otherwise that account's own chat with
+the bot, otherwise `RSS_CHAT`.
 
 ## What is stored
 
@@ -50,7 +60,7 @@ bot uses everywhere else — `p_` plus the first 24 characters of `sha256("wzmlx
 + bot id)`. One document per link:
 
 ```
-_id, url, name, flags, engine, chatId, batch
+_id, url, name, flags, engine, chatId, userId, batch
 status: queued | running | done | failed | cancelled
 createdAt, startedAt, finishedAt, mid, command
 cancelRequested
@@ -59,5 +69,5 @@ result:   { name, size, link, files, folders }
 error
 ```
 
-The document `_id: "__bridge__"` is the heartbeat: it is how the Hub knows the bot is alive, and it
+The document `_id: "__settings__"` holds `maxRunning`, and `_id: "__bridge__"` is the heartbeat: it is how the Hub knows the bot is alive, and it
 is never treated as a task.
