@@ -2,7 +2,7 @@
    <img src="docs/w-icon.svg" alt="WZML-X logo" width="160">
 </p>
 
-<h1 align="center">WZML-X</h1>
+<h1 align="center">WZML-X-New</h1>
 
 <p align="center">
    Telegram mirroring and leeching platform with a container-based runtime, a lightweight web UI, and a configurable transfer pipeline.
