@@ -1,6 +1,7 @@
-# tgleech — the TG Leech bridge
+# tgleech — the bridge behind the bot's control panel
 
-Lets the R2-Transfer Hub's **TG Leech** page hand this bot direct download links.
+Lets a web page hand this bot work: the bot's **own control panel** at `/panel`, and the
+R2-Transfer Hub's **TG Leech** page.
 
 The bot has no endpoint that takes a task, but it already keeps its settings and its user data in
 MongoDB. This plugin uses the same database as a queue: the Hub writes one document per link, the
@@ -8,6 +9,9 @@ plugin claims it, starts exactly the task `/leech` would have started, and write
 the outcome back to that document.
 
 Nothing here replaces or changes the Telegram commands — they keep working untouched.
+
+**This plugin is what makes the control panel work.** Without it the panel still opens and reports
+honestly — it says the bot is not answering — but nothing it is asked to do will happen.
 
 ## Installing
 
@@ -73,5 +77,40 @@ Stopping is asked for by setting `cancelRequested` on a task. The bridge closes 
 waiting in one write, and cancels what is actually running one at a time, because each of those is a
 download the bot is holding.
 
-The document `_id: "__settings__"` holds `maxRunning`, and `_id: "__bridge__"` is the heartbeat: it is how the Hub knows the bot is alive, and it
-is never treated as a task.
+The document `_id: "__settings__"` holds what the page asks of the bot, and `_id: "__bridge__"` is
+the heartbeat — how a page knows the bot is alive. Neither is ever treated as a task.
+
+```
+__settings__: { maxRunning, restartAt, restartDoneAt, cancelMids: [ ... ] }
+__bridge__:   { at, version, bot, botId, running, maxRunning, leechDisabled,
+                defaultUpload, startedAt, tasks: [ ... ] }
+```
+
+- `mode` on a task is `leech` (into Telegram) or `mirror` (uploaded to wherever `DEFAULT_UPLOAD`
+  points). A task with no `mode` is a leech, which is what every task was before.
+- `restartAt` asks the bot to restart itself. The bridge takes the bot's own restart path — the same
+  one the `/restart` button takes — and writes `restartDoneAt` **before** stopping anything, so a
+  restart it caused can never look like a fresh order and loop.
+- `cancelMids` stops tasks the bridge never started, by their message id. Ids are taken off the list
+  as they are dealt with.
+- `tasks` on the heartbeat is everything the bot has in hand, including work started from Telegram,
+  each marked `mine` when this bridge started it. That is what the panel's "Running now" shows.
+
+## The control panel
+
+`web/panel.py` and `web/templates/panel.html` serve a page at **`/panel`** on the bot's own web
+address, linked from its landing page. It is locked with a password — `kasun123` unless
+`PANEL_PASSWORD` says otherwise — and from it you can:
+
+- paste links in bulk and send them as a **leech** or a **mirror**, with any engine (direct,
+  qBittorrent, JDownloader, NZB, yt-dlp), optional rename, flags, user id and chat id
+- watch **everything the bot is doing**, including tasks started in Telegram, and stop any of them
+- see what was sent from the page with its progress, stop one or all, clear what is finished
+- set how many run at once
+- read and edit the bot's saved settings (tokens and passwords are never shown)
+- read the tail of the log
+- restart the bot
+
+The panel runs in the **web** process, not the bot process — gunicorn serves it beside the bot — so
+it never calls the bot directly. Everything above travels through the documents described here, and
+this plugin is the half that acts on them.

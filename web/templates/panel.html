@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#00000C">
+    <title>WZML-X — Control</title>
+    <meta name="description" content="Control panel for this bot: leech, mirror, watch and restart.">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22.5' fill='%23F5F7FF'/%3E%3Cpath d='M 19.4 42.6 C 20.0 55.4 22.4 66.4 29.8 68.3 C 37.0 70.1 43.2 61.0 45.2 48.8 C 47.5 61.0 53.4 66.6 61.0 68.3 C 68.6 70.0 75.6 55.5 80.6 35.3' fill='none' stroke='%233D87FF' stroke-width='11.1' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #00000C;
+            --card: #05081A;
+            --line: rgba(93, 157, 255, 0.14);
+            --line-strong: rgba(42, 95, 208, 0.55);
+            --light: #3D87FF;
+            --pale: #5B9DFF;
+            --text: #F5F7FF;
+            --muted: #98A3BF;
+            --good: #37D67A;
+            --bad: #FF5C6C;
+            --warn: #FFC048;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: Montserrat, system-ui, -apple-system, "Segoe UI", sans-serif;
+            font-size: 14px;
+            line-height: 1.5;
+            padding: 20px 16px 60px;
+        }
+
+        .wrap { max-width: 1040px; margin: 0 auto; }
+
+        h1 { font-size: 18px; font-weight: 800; letter-spacing: .04em; }
+        h2 { font-size: 12px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--pale); margin-bottom: 12px; }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 18px;
+            margin-bottom: 16px;
+        }
+
+        .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+        .grow { flex: 1 1 200px; }
+        .spacer { flex: 1 1 auto; }
+
+        label { display: block; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+
+        input, select, textarea {
+            width: 100%;
+            background: rgba(255, 255, 255, .03);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 13px;
+            padding: 10px 12px;
+        }
+        textarea { resize: vertical; min-height: 96px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+        input:focus, select:focus, textarea:focus { outline: none; border-color: var(--line-strong); }
+        select option { background: #05081A; }
+
+        button {
+            background: rgba(61, 135, 255, .12);
+            border: 1px solid var(--line-strong);
+            border-radius: 10px;
+            color: var(--pale);
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: .1em;
+            padding: 10px 16px;
+            text-transform: uppercase;
+        }
+        button:hover:not(:disabled) { background: rgba(61, 135, 255, .22); }
+        button:disabled { opacity: .45; cursor: not-allowed; }
+        button.quiet { background: transparent; border-color: var(--line); color: var(--muted); }
+        button.danger { border-color: rgba(255, 92, 108, .5); color: var(--bad); background: rgba(255, 92, 108, .08); }
+        button.small { padding: 6px 10px; font-size: 10px; }
+
+        .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; background: var(--muted); }
+        .dot.on { background: var(--good); }
+        .dot.off { background: var(--bad); }
+
+        .muted { color: var(--muted); }
+        .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+        .tiny { font-size: 11px; }
+        .pill { border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+        .pill.mirror { color: var(--warn); border-color: rgba(255, 192, 72, .4); }
+
+        .counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+        .count { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+        .count b { display: block; font-size: 18px; font-weight: 800; }
+
+        .task { border-top: 1px solid var(--line); padding: 12px 0; }
+        .task:first-child { border-top: none; }
+        .bar { height: 4px; border-radius: 999px; background: rgba(255,255,255,.06); overflow: hidden; margin-top: 8px; }
+        .bar > i { display: block; height: 100%; background: var(--light); }
+
+        .note { border-radius: 10px; padding: 10px 12px; font-size: 12px; margin-bottom: 12px; }
+        .note.bad { background: rgba(255, 92, 108, .1); border: 1px solid rgba(255, 92, 108, .35); color: #FFD2D7; }
+        .note.good { background: rgba(55, 214, 122, .08); border: 1px solid rgba(55, 214, 122, .3); color: #CFF5DF; }
+
+        pre { white-space: pre-wrap; word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--muted); max-height: 340px; overflow: auto; }
+
+        .hide { display: none !important; }
+        .gate { max-width: 340px; margin: 14vh auto 0; }
+        .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+    </style>
+</head>
+<body>
+
+<!-- The way in -->
+<div id="gate" class="wrap gate hide">
+    <div class="card">
+        <h1 style="margin-bottom:14px">WZML-X Control</h1>
+        <label for="pw">Password</label>
+        <input id="pw" type="password" autocomplete="current-password">
+        <div id="gate-problem" class="note bad hide" style="margin-top:12px"></div>
+        <button id="gate-go" style="width:100%; margin-top:12px">Open</button>
+        <p class="tiny muted" style="margin-top:10px">Remembered in this browser until you lock it.</p>
+    </div>
+</div>
+
+<!-- The panel -->
+<div id="panel" class="wrap hide">
+
+    <div class="row" style="margin-bottom:16px">
+        <h1>WZML-X Control</h1>
+        <span id="state-dot" class="dot"></span>
+        <span id="state-text" class="tiny muted">checking…</span>
+        <span class="spacer"></span>
+        <button id="restart" class="quiet">Restart bot</button>
+        <button id="lock" class="quiet">Lock</button>
+    </div>
+
+    <div id="problem" class="note bad hide"></div>
+    <div id="said" class="note good hide"></div>
+
+    <!-- Add work -->
+    <div class="card">
+        <h2>Add links</h2>
+        <label for="links">One link per line — lines starting with # are skipped</label>
+        <textarea id="links" spellcheck="false" placeholder="https://example.com/file.mkv&#10;https://example.com/another.zip&#10;magnet:?xt=urn:btih:…"></textarea>
+
+        <div class="row" style="margin-top:12px">
+            <div style="flex:0 0 190px">
+                <label for="mode">Send them</label>
+                <select id="mode">
+                    <option value="leech">Leech — into Telegram</option>
+                    <option value="mirror">Mirror — upload instead</option>
+                </select>
+            </div>
+            <div style="flex:0 0 170px">
+                <label for="engine">With</label>
+                <select id="engine">
+                    <option value="direct">Direct / torrent</option>
+                    <option value="qb">qBittorrent</option>
+                    <option value="jd">JDownloader</option>
+                    <option value="nzb">NZB (SABnzbd)</option>
+                    <option value="ytdl">yt-dlp</option>
+                </select>
+            </div>
+            <div class="grow">
+                <label for="flags">Extra flags (optional)</label>
+                <input id="flags" class="mono" placeholder="-doc -z password">
+            </div>
+            <div style="flex:0 0 auto; align-self:flex-end">
+                <button id="start">Start</button>
+            </div>
+        </div>
+
+        <div class="row" style="margin-top:12px">
+            <button id="more-toggle" class="quiet small">More options</button>
+            <span id="mirror-note" class="tiny muted"></span>
+        </div>
+
+        <div id="more" class="row hide" style="margin-top:12px">
+            <div class="grow">
+                <label for="name">Rename to (one link only)</label>
+                <input id="name" placeholder="My File.mkv">
+            </div>
+            <div class="grow">
+                <label for="userId">Run as user id (blank = owner)</label>
+                <input id="userId" class="mono" placeholder="123456789">
+            </div>
+            <div class="grow">
+                <label for="chatId">Post in chat id (blank = that user's chat)</label>
+                <input id="chatId" class="mono" placeholder="-1001234567890">
+            </div>
+            <div style="flex:0 0 150px">
+                <label for="atOnce">Run at once</label>
+                <div class="row" style="gap:8px">
+                    <input id="atOnce" type="number" min="1" max="20" style="flex:1 1 60px">
+                    <button id="atOnceSave" class="quiet small">Set</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Everything the bot is doing -->
+    <div class="card">
+        <div class="row" style="margin-bottom:12px">
+            <h2 style="margin:0">Running now</h2>
+            <span class="spacer"></span>
+            <span id="live-count" class="tiny muted"></span>
+        </div>
+        <div id="live"><p class="tiny muted">Nothing is running.</p></div>
+    </div>
+
+    <!-- What was sent from here -->
+    <div class="card">
+        <div class="row" style="margin-bottom:12px">
+            <h2 style="margin:0">Sent from this page</h2>
+            <span class="spacer"></span>
+            <button id="cancel-all" class="quiet small">Stop all</button>
+            <button id="clear" class="quiet small">Clear finished</button>
+        </div>
+        <div class="counts" id="counts"></div>
+        <div id="tasks" style="margin-top:12px"><p class="tiny muted">Nothing here yet.</p></div>
+    </div>
+
+    <!-- The bot's own settings -->
+    <div class="card">
+        <div class="row" style="margin-bottom:12px">
+            <h2 style="margin:0">Bot settings</h2>
+            <span class="spacer"></span>
+            <button id="settings-toggle" class="quiet small">Show</button>
+            <button id="settings-save" class="quiet small hide">Save</button>
+        </div>
+        <p class="tiny muted">These are the bot's own values, as it keeps them. It reads them when it starts, so restart it after saving. Tokens and passwords are never shown.</p>
+        <div id="settings" class="settings-grid hide" style="margin-top:12px"></div>
+    </div>
+
+    <!-- The log -->
+    <div class="card">
+        <div class="row" style="margin-bottom:12px">
+            <h2 style="margin:0">Log</h2>
+            <span class="spacer"></span>
+            <button id="log-toggle" class="quiet small">Show</button>
+        </div>
+        <pre id="log" class="hide"></pre>
+    </div>
+
+</div>
+
+<script>
+(() => {
+    const STORED = "wzmlx-panel-password";
+    let password = "";
+    try { password = localStorage.getItem(STORED) || ""; } catch { password = ""; }
+
+    const $ = (id) => document.getElementById(id);
+    const show = (el, on) => el.classList.toggle("hide", !on);
+
+    const say = (text, bad) => {
+        const box = bad ? $("problem") : $("said");
+        const other = bad ? $("said") : $("problem");
+        box.textContent = text;
+        show(box, Boolean(text));
+        show(other, false);
+        if (!bad && text) setTimeout(() => show(box, false), 6000);
+    };
+
+    async function call(path, options = {}) {
+        const res = await fetch(path, {
+            ...options,
+            headers: {
+                "content-type": "application/json",
+                "x-panel-password": password,
+                ...(options.headers || {}),
+            },
+        });
+        let body = null;
+        try { body = await res.json(); } catch {}
+        if (!res.ok) throw new Error(body?.detail || `The bot answered ${res.status}.`);
+        return body;
+    }
+
+    // --- the way in --------------------------------------------------------
+    async function opens(candidate) {
+        const res = await fetch("/panel/api/login", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ password: candidate }),
+        });
+        return res.ok;
+    }
+
+    $("gate-go").addEventListener("click", async () => {
+        const typed = $("pw").value;
+        if (!(await opens(typed))) {
+            $("gate-problem").textContent = "That password does not open this panel.";
+            show($("gate-problem"), true);
+            return;
+        }
+        password = typed;
+        try { localStorage.setItem(STORED, typed); } catch {}
+        show($("gate"), false);
+        show($("panel"), true);
+        pull();
+    });
+    $("pw").addEventListener("keydown", (e) => { if (e.key === "Enter") $("gate-go").click(); });
+
+    $("lock").addEventListener("click", () => {
+        password = "";
+        try { localStorage.removeItem(STORED); } catch {}
+        location.reload();
+    });
+
+    // --- what the bot is doing --------------------------------------------
+    const ago = (seconds) => {
+        if (seconds === null || seconds === undefined) return "";
+        if (seconds < 60) return `${seconds}s`;
+        if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+        if (seconds < 86400) return `${Math.round(seconds / 3600)}h`;
+        return `${Math.round(seconds / 86400)}d`;
+    };
+
+    const text = (value) => (value === null || value === undefined ? "" : String(value));
+
+    function drawLive(rows) {
+        const box = $("live");
+        $("live-count").textContent = rows.length ? `${rows.length} task(s)` : "";
+        if (!rows.length) {
+            box.innerHTML = '<p class="tiny muted">Nothing is running.</p>';
+            return;
+        }
+        box.innerHTML = rows.map((row) => {
+            const percent = parseFloat(String(row.percent || "").replace("%", "")) || 0;
+            return `
+            <div class="task">
+              <div class="row">
+                <span class="mono tiny" style="flex:1 1 220px; word-break:break-all">${escape(row.name) || "(no name)"}</span>
+                ${row.mine ? '<span class="pill">from this page</span>' : ""}
+                <span class="tiny muted">${escape(row.state)}</span>
+                <button class="quiet small stop-live" data-mid="${escape(row.mid)}">Stop</button>
+              </div>
+              <div class="row tiny muted" style="gap:14px; margin-top:4px">
+                <span>${escape(row.processed)} / ${escape(row.size)}</span>
+                <span>${escape(row.speed)}</span>
+                <span>${escape(row.eta)}</span>
+                <span>${escape(row.engine)}</span>
+                ${row.by ? `<span>${escape(row.by)}</span>` : ""}
+              </div>
+              <div class="bar"><i style="width:${Math.max(0, Math.min(100, percent))}%"></i></div>
+            </div>`;
+        }).join("");
+        box.querySelectorAll(".stop-live").forEach((button) => {
+            button.addEventListener("click", async () => {
+                button.disabled = true;
+                try {
+                    const out = await call("/panel/api/live/cancel", {
+                        method: "POST",
+                        body: JSON.stringify({ mid: Number(button.dataset.mid) }),
+                    });
+                    say(out.message, false);
+                } catch (err) { say(err.message, true); }
+            });
+        });
+    }
+
+    function drawCounts(counts) {
+        $("counts").innerHTML = [
+            ["Total", counts.total],
+            ["Waiting", counts.queued],
+            ["Running", counts.running],
+            ["Done", counts.done],
+            ["Failed", counts.failed],
+            ["Stopped", counts.cancelled],
+        ].map(([label, value]) => `<div class="count"><b>${value ?? 0}</b><span class="tiny muted">${label}</span></div>`).join("");
+    }
+
+    function drawTasks(rows) {
+        const box = $("tasks");
+        if (!rows.length) {
+            box.innerHTML = '<p class="tiny muted">Nothing here yet.</p>';
+            return;
+        }
+        box.innerHTML = rows.map((task) => {
+            const p = task.progress || {};
+            const percent = parseFloat(String(p.percent || "").replace("%", "")) || 0;
+            const running = task.status === "running";
+            const colour = task.status === "failed" ? "var(--bad)" : task.status === "done" ? "var(--good)" : "var(--muted)";
+            return `
+            <div class="task">
+              <div class="row">
+                <span class="tiny" style="color:${colour}; flex:0 0 70px; text-transform:uppercase; letter-spacing:.1em">${escape(task.status)}</span>
+                <span class="mono tiny" style="flex:1 1 200px; word-break:break-all">${escape(p.name || task.name || task.url)}</span>
+                ${task.mode === "mirror" ? '<span class="pill mirror">mirror</span>' : ""}
+                ${(task.status === "queued" || running)
+                    ? `<button class="quiet small stop-task" data-id="${escape(task.id)}" ${task.cancelRequested ? "disabled" : ""}>Stop</button>`
+                    : ""}
+              </div>
+              ${running ? `
+              <div class="row tiny muted" style="gap:14px; margin-top:4px">
+                <span>${escape(p.processed)} / ${escape(p.size)}</span>
+                <span>${escape(p.speed)}</span>
+                <span>${escape(p.eta)}</span>
+              </div>
+              <div class="bar"><i style="width:${Math.max(0, Math.min(100, percent))}%"></i></div>` : ""}
+              ${task.error ? `<p class="tiny" style="color:var(--bad); margin-top:4px">${escape(task.error)}</p>` : ""}
+              ${task.result?.link ? `<p class="tiny" style="margin-top:4px"><a href="${escape(task.result.link)}" style="color:var(--pale)">${escape(task.result.name || "link")}</a></p>` : ""}
+            </div>`;
+        }).join("");
+        box.querySelectorAll(".stop-task").forEach((button) => {
+            button.addEventListener("click", async () => {
+                button.disabled = true;
+                try {
+                    await call("/panel/api/tasks/cancel", { method: "POST", body: JSON.stringify({ id: button.dataset.id }) });
+                } catch (err) { say(err.message, true); }
+            });
+        });
+    }
+
+    function escape(value) {
+        return text(value).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+    }
+
+    let atOnceTouched = false;
+    $("atOnce").addEventListener("input", () => { atOnceTouched = true; });
+
+    async function pull() {
+        let data;
+        try {
+            data = await call("/panel/api/state");
+        } catch (err) {
+            if (String(err.message).includes("401")) { location.reload(); return; }
+            $("state-dot").className = "dot off";
+            $("state-text").textContent = err.message;
+            return;
+        }
+        if (!data.reachable) {
+            $("state-dot").className = "dot off";
+            $("state-text").textContent = data.why;
+            return;
+        }
+        const b = data.bridge;
+        $("state-dot").className = "dot " + (b.online ? "on" : "off");
+        $("state-text").textContent = b.online
+            ? `${b.bot || "bot"} · ${b.version} · ${b.running}/${b.maxRunning} running · up ${ago(b.upSeconds)}`
+            : b.present
+              ? `not answering — last heard ${ago(b.secondsAgo)} ago`
+              : "the tgleech plugin is not loaded in this bot";
+        $("mirror-note").textContent = b.defaultUpload
+            ? `A mirror goes where DEFAULT_UPLOAD points — currently "${b.defaultUpload}".`
+            : "";
+        if (!atOnceTouched) $("atOnce").value = b.atOnce || b.maxRunning || 3;
+
+        drawLive(data.live || []);
+        drawCounts(data.counts || {});
+        drawTasks(data.tasks || []);
+    }
+
+    // --- the buttons -------------------------------------------------------
+    $("start").addEventListener("click", async () => {
+        const button = $("start");
+        button.disabled = true;
+        try {
+            const out = await call("/panel/api/tasks", {
+                method: "POST",
+                body: JSON.stringify({
+                    links: $("links").value,
+                    mode: $("mode").value,
+                    engine: $("engine").value,
+                    flags: $("flags").value,
+                    name: $("name").value,
+                    userId: $("userId").value,
+                    chatId: $("chatId").value,
+                }),
+            });
+            $("links").value = "";
+            $("name").value = "";
+            say(out.message, false);
+            pull();
+        } catch (err) { say(err.message, true); }
+        button.disabled = false;
+    });
+
+    $("more-toggle").addEventListener("click", () => {
+        const open = $("more").classList.contains("hide");
+        show($("more"), open);
+        $("more-toggle").textContent = open ? "Fewer options" : "More options";
+    });
+
+    $("atOnceSave").addEventListener("click", async () => {
+        try {
+            const out = await call("/panel/api/at-once", { method: "POST", body: JSON.stringify({ value: Number($("atOnce").value) }) });
+            atOnceTouched = false;
+            say(out.message, false);
+        } catch (err) { say(err.message, true); }
+    });
+
+    $("cancel-all").addEventListener("click", async () => {
+        if (!confirm("Stop everything sent from this page?")) return;
+        try { say((await call("/panel/api/tasks/cancel-all", { method: "POST" })).message, false); pull(); }
+        catch (err) { say(err.message, true); }
+    });
+
+    $("clear").addEventListener("click", async () => {
+        try { say((await call("/panel/api/tasks/clear", { method: "POST" })).message, false); pull(); }
+        catch (err) { say(err.message, true); }
+    });
+
+    $("restart").addEventListener("click", async () => {
+        if (!confirm("Restart the bot? Anything running now is lost; waiting tasks survive.")) return;
+        try { say((await call("/panel/api/restart", { method: "POST" })).message, false); }
+        catch (err) { say(err.message, true); }
+    });
+
+    // --- settings ----------------------------------------------------------
+    $("settings-toggle").addEventListener("click", async () => {
+        const box = $("settings");
+        const opening = box.classList.contains("hide");
+        if (!opening) {
+            show(box, false);
+            show($("settings-save"), false);
+            $("settings-toggle").textContent = "Show";
+            return;
+        }
+        try {
+            const out = await call("/panel/api/settings");
+            const entries = Object.entries(out.values || {});
+            box.innerHTML = entries.length
+                ? entries.map(([key, value]) => `
+                    <div>
+                      <label for="set-${escape(key)}">${escape(key)}</label>
+                      <input id="set-${escape(key)}" class="mono setting" data-key="${escape(key)}" value="${escape(value)}">
+                    </div>`).join("")
+                : '<p class="tiny muted">This bot has nothing saved in the database yet.</p>';
+            show(box, true);
+            show($("settings-save"), true);
+            $("settings-toggle").textContent = "Hide";
+        } catch (err) { say(err.message, true); }
+    });
+
+    $("settings-save").addEventListener("click", async () => {
+        const values = {};
+        document.querySelectorAll(".setting").forEach((input) => { values[input.dataset.key] = input.value; });
+        try { say((await call("/panel/api/settings", { method: "POST", body: JSON.stringify({ values }) })).message, false); }
+        catch (err) { say(err.message, true); }
+    });
+
+    // --- log ---------------------------------------------------------------
+    $("log-toggle").addEventListener("click", async () => {
+        const box = $("log");
+        const opening = box.classList.contains("hide");
+        if (!opening) {
+            show(box, false);
+            $("log-toggle").textContent = "Show";
+            return;
+        }
+        try {
+            const out = await call("/panel/api/log?lines=300");
+            box.textContent = (out.lines || []).join("\n") || out.why || "(empty)";
+            show(box, true);
+            $("log-toggle").textContent = "Hide";
+        } catch (err) { say(err.message, true); }
+    });
+
+    // --- start -------------------------------------------------------------
+    (async () => {
+        if (password && (await opens(password))) {
+            show($("panel"), true);
+            pull();
+        } else {
+            show($("gate"), true);
+            $("pw").focus();
+        }
+        setInterval(() => { if (!$("panel").classList.contains("hide")) pull(); }, 3000);
+    })();
+})();
+</script>
+</body>
+</html>

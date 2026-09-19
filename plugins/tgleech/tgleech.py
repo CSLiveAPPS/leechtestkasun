@@ -35,6 +35,10 @@ HEARTBEAT_ID = "__bridge__"
 # without restarting the bot.
 CONTROL_ID = "__settings__"
 
+# How many of the bot's tasks the heartbeat carries. Enough for any real
+# screen, and it keeps one document from growing without limit.
+MAX_SNAPSHOT = 40
+
 DEFAULT_POLL_SECONDS = 5
 DEFAULT_MAX_RUNNING = 3
 
@@ -167,6 +171,7 @@ class TgLeechBridge(PluginBase):
     def __init__(self):
         self._task = None
         self._stop = False
+        self._started_at = time()
         # doc id -> what we know about the task we started for it
         self._running = {}
         # How many at once, as last asked for by the Hub; None = use the
@@ -266,6 +271,7 @@ class TgLeechBridge(PluginBase):
                 await self._beat()
                 await self._watch()
                 await self._cancels()
+                await self._foreign_cancels()
                 await self._restarts()
                 await self._claim()
             except CancelledError:
@@ -273,6 +279,32 @@ class TgLeechBridge(PluginBase):
             except Exception as err:
                 LOGGER.error(f"tgleech: {err}", exc_info=True)
             await sleep(self._poll_seconds())
+
+    async def _snapshot(self):
+        """
+        Everything the bot has in hand, not only what this bridge started.
+
+        The panel shows the bot as a whole, so a download someone started from
+        Telegram appears beside the ones sent from the page, and can be
+        stopped from either side.
+        """
+        mine = {state["mid"] for state in self._running.values()}
+        out = []
+        async with task_dict_lock:
+            holding = list(task_dict.items())[:MAX_SNAPSHOT]
+        for mid, status in holding:
+            try:
+                row = await _read_progress(status)
+            except Exception:
+                continue
+            row["mid"] = mid
+            row["mine"] = mid in mine
+            try:
+                row["by"] = str(getattr(getattr(status, "listener", None), "tag", "") or "")
+            except Exception:
+                row["by"] = ""
+            out.append(row)
+        return out
 
     async def _beat(self):
         queue = _queue()
@@ -290,10 +322,46 @@ class TgLeechBridge(PluginBase):
                     "maxRunning": self._max_running(),
                     "leechDisabled": bool(Config.DISABLE_LEECH),
                     "defaultUpload": str(Config.DEFAULT_UPLOAD or ""),
+                    "startedAt": self._started_at,
+                    "tasks": await self._snapshot(),
                 }
             },
             upsert=True,
         )
+
+    async def _foreign_cancels(self):
+        """
+        Stops tasks the panel asked about by their message id.
+
+        These are the bot's own tasks — started from Telegram, or by someone
+        else — so there is no queue document behind them. The ids are taken
+        off the list as they are dealt with, so one order stops one task.
+        """
+        queue = _queue()
+        if queue is None:
+            return
+        try:
+            doc = await queue.find_one_and_update(
+                {"_id": CONTROL_ID, "cancelMids": {"$nin": [None, []]}},
+                {"$set": {"cancelMids": []}},
+            )
+        except Exception:
+            return
+        wanted = (doc or {}).get("cancelMids") or []
+        for raw in wanted:
+            try:
+                mid = int(raw)
+            except (TypeError, ValueError):
+                continue
+            async with task_dict_lock:
+                status = task_dict.get(mid)
+            if status is None:
+                continue
+            try:
+                await status.cancel_task()
+                LOGGER.info(f"tgleech: stopped task {mid}, as the panel asked")
+            except Exception as err:
+                LOGGER.error(f"tgleech: could not stop {mid}: {err}")
 
     async def _restarts(self):
         """

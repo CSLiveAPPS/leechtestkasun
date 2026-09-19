@@ -205,6 +205,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# The control panel: leech, mirror, watch and restart from a page instead of
+# from Telegram. It keeps to its own /panel paths and talks to the bot through
+# the database, so nothing else here is touched by it.
+from web.panel import router as panel_router  # noqa: E402
+
+app.include_router(panel_router)
+
 
 templates = Jinja2Templates(directory="web/templates/")
 
