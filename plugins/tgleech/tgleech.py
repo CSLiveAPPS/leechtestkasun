@@ -428,15 +428,36 @@ class TgLeechBridge(PluginBase):
         queue = _queue()
         if queue is None:
             return
+
+        # Stopping a whole batch can mean hundreds that never started. Those
+        # need no talking to — they are closed off in one write rather than
+        # one round trip each.
+        try:
+            waiting = await queue.update_many(
+                {
+                    "cancelRequested": True,
+                    "status": "queued",
+                    "_id": {"$nin": [HEARTBEAT_ID, CONTROL_ID]},
+                },
+                {
+                    "$set": {
+                        "status": "cancelled",
+                        "finishedAt": time(),
+                        "error": "Cancelled before it started.",
+                    }
+                },
+            )
+            if waiting.modified_count:
+                LOGGER.info(f"tgleech: {waiting.modified_count} waiting task(s) cancelled")
+        except Exception as err:
+            LOGGER.error(f"tgleech: could not cancel the waiting tasks: {err}")
+
+        # What is actually running has to be stopped one at a time, because
+        # each one is a download the bot is holding.
         async for doc in queue.find(
-            {"cancelRequested": True, "status": {"$in": ["queued", "running"]}}
+            {"cancelRequested": True, "status": "running"}
         ):
             doc_id = doc["_id"]
-            if doc.get("status") == "queued":
-                await self.finish(
-                    doc_id, "cancelled", error="Cancelled before it started."
-                )
-                continue
             state = self._running.get(doc_id)
             mid = state["mid"] if state else doc.get("mid")
             status = None

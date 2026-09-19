@@ -69,5 +69,9 @@ result:   { name, size, link, files, folders }
 error
 ```
 
+Stopping is asked for by setting `cancelRequested` on a task. The bridge closes off everything still
+waiting in one write, and cancels what is actually running one at a time, because each of those is a
+download the bot is holding.
+
 The document `_id: "__settings__"` holds `maxRunning`, and `_id: "__bridge__"` is the heartbeat: it is how the Hub knows the bot is alive, and it
 is never treated as a task.
