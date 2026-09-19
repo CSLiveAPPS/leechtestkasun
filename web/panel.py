@@ -37,7 +37,12 @@ DEFAULT_PASSWORD = "kasun123"
 HEARTBEAT_ID = "__bridge__"
 CONTROL_ID = "__settings__"
 SKIPPED_ID = "__skipped__"
-NOT_TASKS = {"$nin": [HEARTBEAT_ID, CONTROL_ID, SKIPPED_ID]}
+# What the page itself remembers, and the accounts it has been told about.
+# Both live beside the queue so they survive a refresh, a new browser and a
+# redeploy — the browser keeps nothing but the password.
+PREFS_ID = "__panel__"
+PEOPLE_ID = "__people__"
+NOT_TASKS = {"$nin": [HEARTBEAT_ID, CONTROL_ID, SKIPPED_ID, PREFS_ID, PEOPLE_ID]}
 
 # The bot goes quiet for a few seconds between rounds; longer than this and it
 # is not there.
@@ -111,6 +116,12 @@ def _queue():
 def _settings_store():
     database = _database()
     return None if database is None else database.settings
+
+
+def _people_store():
+    """Where the bot keeps each account's own settings, by Telegram id."""
+    database = _database()
+    return None if database is None else database.users[_partition()]
 
 
 async def _control():
@@ -382,6 +393,185 @@ async def restart(x_panel_password: str = Header(default="")):
         raise HTTPException(status_code=400, detail="This bot has no DATABASE_URL.")
     await queue.update_one({"_id": CONTROL_ID}, {"$set": {"restartAt": time()}}, upsert=True)
     return {"message": "The bot was asked to restart. It is back in a minute or so."}
+
+
+# ---------------------------------------------------------------------------
+# What the page remembers, and the accounts it knows
+# ---------------------------------------------------------------------------
+
+# The fields the page fills in again after a refresh. Anything else typed is
+# for that one job only.
+REMEMBERED = ("userId", "chatId", "mode", "engine", "flags")
+
+
+@router.get("/panel/api/prefs")
+async def read_prefs(x_panel_password: str = Header(default="")):
+    _guard(x_panel_password)
+    queue = _queue()
+    if queue is None:
+        return {"values": {}}
+    doc = await queue.find_one({"_id": PREFS_ID}) or {}
+    return {"values": {key: doc.get(key, "") for key in REMEMBERED}}
+
+
+@router.put("/panel/api/prefs")
+async def write_prefs(payload: dict, x_panel_password: str = Header(default="")):
+    """
+    Keeps what was typed, so a refresh does not empty the page.
+
+    It is saved in the bot's own database rather than in the browser, so the
+    same values are there from any machine — and can be cleared from here.
+    """
+    _guard(x_panel_password)
+    queue = _queue()
+    if queue is None:
+        raise HTTPException(status_code=400, detail="This bot has no DATABASE_URL.")
+    values = payload.get("values")
+    if not isinstance(values, dict):
+        raise HTTPException(status_code=400, detail="Nothing to save.")
+    keep = {}
+    for key in REMEMBERED:
+        if key in values:
+            value = values[key]
+            keep[key] = "" if value is None else str(value).strip()
+    if "mode" in keep and keep["mode"] not in MODES:
+        keep["mode"] = "leech"
+    if "engine" in keep and keep["engine"] not in ENGINES:
+        keep["engine"] = "direct"
+    keep["updatedAt"] = time()
+    await queue.update_one({"_id": PREFS_ID}, {"$set": keep}, upsert=True)
+    return {"saved": True}
+
+
+@router.delete("/panel/api/prefs")
+async def forget_prefs(x_panel_password: str = Header(default="")):
+    _guard(x_panel_password)
+    queue = _queue()
+    if queue is None:
+        raise HTTPException(status_code=400, detail="This bot has no DATABASE_URL.")
+    await queue.delete_one({"_id": PREFS_ID})
+    return {"message": "The page starts empty next time."}
+
+
+def _user_id_problem(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return "Give the account's Telegram id."
+    if not raw.lstrip("-").isdigit():
+        return f'"{raw[:30]}" is not a Telegram id — it is a number, not a name.'
+    return None
+
+
+def _shown(value):
+    """A setting as a person would write it — a chat id is not "-100123.0"."""
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)[:60]
+
+
+async def _own_settings(user_id):
+    """
+    A short account of what that account has told the bot to do.
+
+    This is the same `user_data` the bot applies to a task it runs as that
+    account, so it is also the answer to "will it follow my settings?".
+    """
+    store = _people_store()
+    if store is None:
+        return None
+    try:
+        doc = await store.find_one({"_id": int(user_id)})
+    except (TypeError, ValueError):
+        return None
+    if not doc:
+        return {"known": False, "summary": []}
+    summary = []
+    for key, label in (
+        ("LEECH_SPLIT_SIZE", "split size"),
+        ("USER_DUMP", "dump chat"),
+        ("LEECH_DUMP_CHAT", "dump chat"),
+        ("LEECH_PREFIX", "prefix"),
+        ("LEECH_SUFFIX", "suffix"),
+        ("LEECH_FILENAME_CAPTION", "caption"),
+        ("AS_DOCUMENT", "as document"),
+        ("DEFAULT_UPLOAD", "uploads to"),
+        ("RCLONE_PATH", "rclone path"),
+        ("GDRIVE_ID", "drive folder"),
+        ("EQUAL_SPLITS", "equal splits"),
+    ):
+        value = doc.get(key)
+        if value in (None, "", 0, False):
+            continue
+        summary.append({"label": label, "value": _shown(value)})
+    if doc.get("THUMBNAIL"):
+        summary.append({"label": "thumbnail", "value": "saved"})
+    return {"known": True, "summary": summary}
+
+
+@router.get("/panel/api/people")
+async def list_people(x_panel_password: str = Header(default="")):
+    _guard(x_panel_password)
+    queue = _queue()
+    if queue is None:
+        return {"people": []}
+    doc = await queue.find_one({"_id": PEOPLE_ID}) or {}
+    people = []
+    for entry in doc.get("people") or []:
+        person = {
+            "id": str(entry.get("id", "")),
+            "label": str(entry.get("label", "")),
+            "chatId": str(entry.get("chatId", "")),
+        }
+        person["own"] = await _own_settings(person["id"])
+        people.append(person)
+    people.sort(key=lambda row: row["label"].lower() or row["id"])
+    return {"people": people}
+
+
+@router.post("/panel/api/people")
+async def save_person(payload: dict, x_panel_password: str = Header(default="")):
+    """Adds an account, or changes one already on the list."""
+    _guard(x_panel_password)
+    queue = _queue()
+    if queue is None:
+        raise HTTPException(status_code=400, detail="This bot has no DATABASE_URL.")
+    problem = _user_id_problem(payload.get("id"))
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
+    person = {
+        "id": str(payload.get("id")).strip(),
+        "label": str(payload.get("label") or "").strip(),
+        "chatId": str(payload.get("chatId") or "").strip(),
+    }
+    doc = await queue.find_one({"_id": PEOPLE_ID}) or {}
+    people = [row for row in (doc.get("people") or []) if str(row.get("id")) != person["id"]]
+    people.append(person)
+    await queue.update_one({"_id": PEOPLE_ID}, {"$set": {"people": people}}, upsert=True)
+    return {"message": f"Saved {person['label'] or person['id']}.", "people": len(people)}
+
+
+@router.delete("/panel/api/people/{person_id}")
+async def remove_person(person_id: str, x_panel_password: str = Header(default="")):
+    _guard(x_panel_password)
+    queue = _queue()
+    if queue is None:
+        raise HTTPException(status_code=400, detail="This bot has no DATABASE_URL.")
+    doc = await queue.find_one({"_id": PEOPLE_ID}) or {}
+    people = [row for row in (doc.get("people") or []) if str(row.get("id")) != str(person_id)]
+    await queue.update_one({"_id": PEOPLE_ID}, {"$set": {"people": people}}, upsert=True)
+    return {"message": "Taken off the list. Nothing about the account itself is changed."}
+
+
+@router.get("/panel/api/people/{person_id}")
+async def person_settings(person_id: str, x_panel_password: str = Header(default="")):
+    """What the bot will do when it runs a task as this account."""
+    _guard(x_panel_password)
+    own = await _own_settings(person_id)
+    if own is None:
+        raise HTTPException(status_code=400, detail="This bot has no DATABASE_URL.")
+    return own
 
 
 # ---------------------------------------------------------------------------

@@ -82,6 +82,8 @@ the heartbeat — how a page knows the bot is alive. Neither is ever treated as 
 
 ```
 __settings__: { maxRunning, restartAt, restartDoneAt, cancelMids: [ ... ] }
+__panel__:    { userId, chatId, mode, engine, flags, updatedAt }
+__people__:   { people: [ { id, label, chatId } ] }
 __bridge__:   { at, version, bot, botId, running, maxRunning, leechDisabled,
                 defaultUpload, startedAt, tasks: [ ... ] }
 ```
@@ -95,6 +97,16 @@ __bridge__:   { at, version, bot, botId, running, maxRunning, leechDisabled,
   as they are dealt with.
 - `tasks` on the heartbeat is everything the bot has in hand, including work started from Telegram,
   each marked `mine` when this bridge started it. That is what the panel's "Running now" shows.
+- `__panel__` is what the page had filled in when it was last used, and `__people__` is the list of
+  accounts saved on it. Both are kept here rather than in a browser, so a refresh, another machine
+  or a redeploy finds them again — and either can be cleared from the page. Neither is ever treated
+  as a task.
+
+**Whose settings a task follows.** A task carries `userId`; the bridge runs it as that account, which
+is what makes WZML-X apply that account's own `user_data` — thumbnail, dump chat, split size, prefix,
+caption. The panel shows that account's saved settings beside the field, so what a task will follow
+is visible before it is sent. With no `userId` the task runs as the bot's owner. The account must
+have pressed Start in the bot once, or the bot cannot see it and the task fails saying so.
 
 ## The control panel
 
@@ -107,6 +119,8 @@ address, linked from its landing page. It is locked with a password — `kasun12
 - watch **everything the bot is doing**, including tasks started in Telegram, and stop any of them
 - see what was sent from the page with its progress, stop one or all, clear what is finished
 - set how many run at once
+- keep a list of **accounts** the bot can work as, with a name and an optional chat to post in;
+  each one shows what that account has told the bot to do, so it is plain what a task will follow
 - read and edit the bot's saved settings (tokens and passwords are never shown)
 - read the tail of the log
 - restart the bot

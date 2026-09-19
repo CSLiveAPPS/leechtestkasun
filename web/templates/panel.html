@@ -206,7 +206,49 @@
                     <button id="atOnceSave" class="quiet small">Set</button>
                 </div>
             </div>
+            <div style="flex:1 1 100%">
+                <span id="own-note" class="tiny muted"></span>
+            </div>
+            <div style="flex:1 1 100%">
+                <button id="forget" class="quiet small">Forget what is filled in</button>
+                <span class="tiny muted" style="margin-left:10px">Everything above is kept in the bot's database and comes back on the next visit.</span>
+            </div>
         </div>
+    </div>
+
+    <!-- The accounts the bot can work as -->
+    <div class="card">
+        <div class="row" style="margin-bottom:12px">
+            <h2 style="margin:0">Accounts</h2>
+            <span class="spacer"></span>
+            <button id="person-add" class="quiet small">Add an account</button>
+        </div>
+        <p class="tiny muted">
+            A task runs <em>as</em> one of these Telegram accounts, so the bot applies that account's own
+            settings — thumbnail, dump chat, split size, prefix, caption. The account must have pressed
+            Start in the bot once. These are kept in the bot's database, not in this browser.
+        </p>
+
+        <div id="person-form" class="row hide" style="margin-top:12px">
+            <div style="flex:1 1 160px">
+                <label for="p-label">Name it</label>
+                <input id="p-label" placeholder="Kasun">
+            </div>
+            <div style="flex:1 1 150px">
+                <label for="p-id">Telegram user id</label>
+                <input id="p-id" class="mono" placeholder="123456789">
+            </div>
+            <div style="flex:1 1 170px">
+                <label for="p-chat">Post in chat id (optional)</label>
+                <input id="p-chat" class="mono" placeholder="-1001234567890">
+            </div>
+            <div style="flex:0 0 auto; align-self:flex-end">
+                <button id="person-save">Save</button>
+                <button id="person-cancel" class="quiet">Cancel</button>
+            </div>
+        </div>
+
+        <div id="people" style="margin-top:12px"></div>
     </div>
 
     <!-- Everything the bot is doing -->
@@ -310,6 +352,8 @@
         show($("gate"), false);
         show($("panel"), true);
         pull();
+        loadPrefs();
+        drawPeople();
     });
     $("pw").addEventListener("keydown", (e) => { if (e.key === "Enter") $("gate-go").click(); });
 
@@ -430,6 +474,162 @@
 
     let atOnceTouched = false;
     $("atOnce").addEventListener("input", () => { atOnceTouched = true; });
+
+    // --- what the page remembers -------------------------------------------
+    // These live in the bot's database, not in this browser, so a refresh — or
+    // another machine — finds them again.
+    const REMEMBERED = ["userId", "chatId", "mode", "engine", "flags"];
+    let savingPrefs = null;
+
+    function savePrefs() {
+        clearTimeout(savingPrefs);
+        // A pause, so typing an id is one save rather than nine.
+        savingPrefs = setTimeout(async () => {
+            const values = {};
+            REMEMBERED.forEach((key) => { values[key] = $(key).value; });
+            try { await call("/panel/api/prefs", { method: "PUT", body: JSON.stringify({ values }) }); }
+            catch (err) { say(err.message, true); }
+        }, 500);
+    }
+
+    REMEMBERED.forEach((key) => {
+        $(key).addEventListener("input", savePrefs);
+        $(key).addEventListener("change", savePrefs);
+    });
+
+    async function loadPrefs() {
+        try {
+            const out = await call("/panel/api/prefs");
+            const values = out.values || {};
+            REMEMBERED.forEach((key) => {
+                if (values[key]) $(key).value = values[key];
+            });
+            // Filled-in details are worth seeing straight away.
+            if (values.userId || values.chatId || values.flags) {
+                show($("more"), true);
+                $("more-toggle").textContent = "Fewer options";
+            }
+            showOwnSettings();
+        } catch (err) { say(err.message, true); }
+    }
+
+    $("forget").addEventListener("click", async () => {
+        try {
+            const out = await call("/panel/api/prefs", { method: "DELETE" });
+            REMEMBERED.forEach((key) => {
+                $(key).value = key === "mode" ? "leech" : key === "engine" ? "direct" : "";
+            });
+            $("own-note").textContent = "";
+            say(out.message, false);
+        } catch (err) { say(err.message, true); }
+    });
+
+    // --- the accounts the bot can work as ----------------------------------
+    async function showOwnSettings() {
+        const id = $("userId").value.trim();
+        const note = $("own-note");
+        if (!id) {
+            note.textContent = "No account given, so the bot works as its owner and uses the owner's settings.";
+            return;
+        }
+        try {
+            const own = await call("/panel/api/people/" + encodeURIComponent(id));
+            if (!own.known) {
+                note.textContent = "The bot has nothing saved for " + id +
+                    ". It will still run as that account — press Start in the bot as that account and set it up there.";
+                return;
+            }
+            note.textContent = own.summary.length
+                ? "Tasks run as " + id + " follow that account's settings: " +
+                  own.summary.map((s) => s.label + " " + s.value).join(" · ") + "."
+                : "Tasks run as " + id + " follow that account's settings.";
+        } catch (err) { note.textContent = err.message; }
+    }
+
+    $("userId").addEventListener("change", showOwnSettings);
+
+    async function drawPeople() {
+        let out;
+        try { out = await call("/panel/api/people"); }
+        catch (err) { say(err.message, true); return; }
+        const box = $("people");
+        const people = out.people || [];
+        if (!people.length) {
+            box.innerHTML = '<p class="tiny muted">No accounts saved yet.</p>';
+            return;
+        }
+        box.innerHTML = people.map((person) => {
+            const own = person.own || {};
+            const line = !own.known
+                ? "nothing saved in the bot for this account"
+                : own.summary.length
+                  ? own.summary.map((s) => escape(s.label) + " " + escape(s.value)).join(" · ")
+                  : "settings saved in the bot";
+            return '<div class="task">' +
+                '<div class="row">' +
+                  '<span style="flex:1 1 160px"><b>' + (escape(person.label) || "(unnamed)") + '</b> ' +
+                    '<span class="mono tiny muted">' + escape(person.id) + '</span></span>' +
+                  (person.chatId ? '<span class="tiny muted">posts in ' + escape(person.chatId) + '</span>' : "") +
+                  '<button class="quiet small use-person" data-id="' + escape(person.id) +
+                    '" data-chat="' + escape(person.chatId) + '">Use</button>' +
+                  '<button class="quiet small edit-person" data-id="' + escape(person.id) +
+                    '" data-label="' + escape(person.label) + '" data-chat="' + escape(person.chatId) + '">Change</button>' +
+                  '<button class="quiet small danger drop-person" data-id="' + escape(person.id) + '">Remove</button>' +
+                '</div>' +
+                '<p class="tiny muted" style="margin-top:4px">' + line + '</p>' +
+              '</div>';
+        }).join("");
+
+        box.querySelectorAll(".use-person").forEach((button) => {
+            button.addEventListener("click", () => {
+                $("userId").value = button.dataset.id;
+                $("chatId").value = button.dataset.chat || "";
+                show($("more"), true);
+                $("more-toggle").textContent = "Fewer options";
+                savePrefs();
+                showOwnSettings();
+                say("Links will now run as " + button.dataset.id + ".", false);
+            });
+        });
+        box.querySelectorAll(".edit-person").forEach((button) => {
+            button.addEventListener("click", () => {
+                $("p-label").value = button.dataset.label || "";
+                $("p-id").value = button.dataset.id;
+                $("p-chat").value = button.dataset.chat || "";
+                show($("person-form"), true);
+            });
+        });
+        box.querySelectorAll(".drop-person").forEach((button) => {
+            button.addEventListener("click", async () => {
+                if (!confirm("Take this account off the list? The account itself is not touched.")) return;
+                try {
+                    const out = await call("/panel/api/people/" + encodeURIComponent(button.dataset.id), { method: "DELETE" });
+                    say(out.message, false);
+                    drawPeople();
+                } catch (err) { say(err.message, true); }
+            });
+        });
+    }
+
+    $("person-add").addEventListener("click", () => {
+        $("p-label").value = "";
+        $("p-id").value = "";
+        $("p-chat").value = "";
+        show($("person-form"), true);
+        $("p-label").focus();
+    });
+    $("person-cancel").addEventListener("click", () => show($("person-form"), false));
+    $("person-save").addEventListener("click", async () => {
+        try {
+            const out = await call("/panel/api/people", {
+                method: "POST",
+                body: JSON.stringify({ id: $("p-id").value, label: $("p-label").value, chatId: $("p-chat").value }),
+            });
+            show($("person-form"), false);
+            say(out.message, false);
+            drawPeople();
+        } catch (err) { say(err.message, true); }
+    });
 
     async function pull() {
         let data;
@@ -574,6 +774,8 @@
         if (password && (await opens(password))) {
             show($("panel"), true);
             pull();
+            loadPrefs();
+            drawPeople();
         } else {
             show($("gate"), true);
             $("pw").focus();
