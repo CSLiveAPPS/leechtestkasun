@@ -45,14 +45,21 @@ START_GRACE_SECONDS = 180
 # callback is usually already on its way.
 FINISH_GRACE_SECONDS = 90
 
-# Which class runs a link, and the command word the trigger message carries.
+# Which class runs a link, and the command word the trigger message carries —
+# one word for leeching into Telegram, another for mirroring to wherever
+# DEFAULT_UPLOAD points.
 ENGINES = {
-    "direct": ("mirror", {}, "leech"),
-    "qb": ("mirror", {"is_qbit": True}, "qbleech"),
-    "jd": ("mirror", {"is_jd": True}, "jdleech"),
-    "nzb": ("mirror", {"is_nzb": True}, "nzbleech"),
-    "ytdl": ("ytdl", {}, "ytdlleech"),
+    "direct": ("mirror", {}, {"leech": "leech", "mirror": "mirror"}),
+    "qb": ("mirror", {"is_qbit": True}, {"leech": "qbleech", "mirror": "qbmirror"}),
+    "jd": ("mirror", {"is_jd": True}, {"leech": "jdleech", "mirror": "jdmirror"}),
+    "nzb": ("mirror", {"is_nzb": True}, {"leech": "nzbleech", "mirror": "nzbmirror"}),
+    "ytdl": ("ytdl", {}, {"leech": "ytdlleech", "mirror": "ytdl"}),
 }
+
+
+def _mode(doc):
+    """Leech unless the task plainly says mirror. Older tasks carry neither."""
+    return "mirror" if str(doc.get("mode") or "").strip() == "mirror" else "leech"
 
 
 def _partition():
@@ -70,7 +77,7 @@ def _queue():
 
 def _command_text(doc):
     engine = ENGINES.get(doc.get("engine") or "direct") or ENGINES["direct"]
-    word = engine[2]
+    word = engine[2][_mode(doc)]
     if Config.CMD_SUFFIX:
         word = f"{word}{Config.CMD_SUFFIX}"
     parts = [f"/{word}", str(doc.get("url") or "").strip()]
@@ -259,6 +266,7 @@ class TgLeechBridge(PluginBase):
                 await self._beat()
                 await self._watch()
                 await self._cancels()
+                await self._restarts()
                 await self._claim()
             except CancelledError:
                 raise
@@ -281,10 +289,101 @@ class TgLeechBridge(PluginBase):
                     "running": len(self._running),
                     "maxRunning": self._max_running(),
                     "leechDisabled": bool(Config.DISABLE_LEECH),
+                    "defaultUpload": str(Config.DEFAULT_UPLOAD or ""),
                 }
             },
             upsert=True,
         )
+
+    async def _restarts(self):
+        """
+        Restarts the bot when the page asks for it.
+
+        The page cannot press the bot's own confirm button, so this takes the
+        same path that button takes — the bot's own restart, with its own
+        tidying up: tasks stopped, helpers killed, update.py run, then the
+        process replaced. Anything running is lost, exactly as it is when the
+        owner restarts from Telegram.
+
+        The order is marked as carried out *before* anything is stopped. A
+        restart that came from this must never be seen as a fresh order by the
+        bot that comes back, or it would restart for ever.
+        """
+        queue = _queue()
+        if queue is None:
+            return
+        try:
+            doc = await queue.find_one({"_id": CONTROL_ID})
+        except Exception:
+            return
+        if not doc:
+            return
+        try:
+            asked = float(doc.get("restartAt") or 0)
+        except (TypeError, ValueError):
+            return
+        if asked <= 0:
+            return
+        try:
+            done = float(doc.get("restartDoneAt") or 0)
+        except (TypeError, ValueError):
+            done = 0.0
+        if asked <= done:
+            return
+
+        try:
+            await queue.update_one(
+                {"_id": CONTROL_ID},
+                {"$set": {"restartDoneAt": asked, "restartRanAt": time()}},
+            )
+        except Exception as err:
+            LOGGER.error(f"tgleech: could not mark the restart as taken: {err}")
+            return
+
+        LOGGER.info("tgleech: restarting, as the page asked")
+        try:
+            await self._restart_now()
+        except Exception as err:
+            LOGGER.error(f"tgleech: the restart failed: {err}", exc_info=True)
+
+    async def _restart_now(self):
+        """The bot's own restart, driven from here instead of from a button."""
+        from bot.modules.restart import confirm_restart
+
+        chat_id = Config.OWNER_ID
+        try:
+            note = await TgClient.bot.send_message(
+                chat_id=chat_id,
+                text="Restart asked for from the R2-Transfer page.",
+                disable_notification=True,
+            )
+            holder = await TgClient.bot.send_message(
+                chat_id=chat_id,
+                text="/restart",
+                disable_notification=True,
+            )
+        except Exception as err:
+            LOGGER.error(f"tgleech: could not post the restart note: {err}")
+            return
+
+        # confirm_restart works off the button's own message: it deletes that
+        # message and answers in the one it replies to.
+        holder.reply_to_message = note
+
+        class _AsIfPressed:
+            def __init__(self, message):
+                self.data = "botrestart confirm hard"
+                self.message = message
+
+            async def answer(self, *args, **kwargs):
+                return None
+
+        # Its decorator hands back the task it started rather than its result,
+        # so the work is waited on here — the process is replaced part-way
+        # through, and anything that goes wrong before that gets logged.
+        started = await confirm_restart(TgClient.bot, _AsIfPressed(holder))
+        if started is not None:
+            await started
 
     async def _claim(self):
         queue = _queue()
@@ -371,11 +470,20 @@ class TgLeechBridge(PluginBase):
         message.from_user = user
         message._rss_trigger = True
 
-        kind, kwargs, _word = (
+        kind, kwargs, _words = (
             ENGINES.get(doc.get("engine") or "direct") or ENGINES["direct"]
         )
         runner = ReportingYtDlp if kind == "ytdl" else ReportingMirror
-        task = runner(TgClient.bot, message, doc_id, self, is_leech=True, **kwargs)
+        # A mirror is the same task with the uploading turned the other way:
+        # the bot's own DEFAULT_UPLOAD decides where it lands.
+        task = runner(
+            TgClient.bot,
+            message,
+            doc_id,
+            self,
+            is_leech=_mode(doc) == "leech",
+            **kwargs,
+        )
 
         self._running[doc_id] = {
             "mid": message.id,
